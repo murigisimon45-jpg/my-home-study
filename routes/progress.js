@@ -17,53 +17,44 @@ router.get('/teacher/students', auth, async (req,res)=>{
       results.push({student:stu, completions, practicesCount:practices.length, avgPractice:avg});
     }
     res.json(results);
+  }catch(e){
+    console.error(e);
+    res.status(500).json({msg:'Server error'});
+  }
+});
+
+router.get('/completions', auth, async (req,res)=>{
+  try{
+    const list = await TopicCompletion.find({studentId:req.user._id});
+    res.json(list);
   }catch(e){ res.status(500).json({msg:'Server error'}); }
 });
 
-// Topic completions
-router.get('/completions', auth, async (req,res)=>{
-  const list = await TopicCompletion.find({studentId:req.user._id});
-  res.json(list);
+router.get('/practice', auth, async (req,res)=>{
+  try{
+    const list = await PracticeScore.find({studentId:req.user._id});
+    res.json(list);
+  }catch(e){ res.status(500).json({msg:'Server error'}); }
 });
 
-router.post('/completions', auth, async (req,res)=>{
+router.post('/completion', auth, async (req,res)=>{
   try{
-    const {topicId} = req.body;
+    const {topicId, subject, grade} = req.body;
+    if(!topicId) return res.status(400).json({msg:'topicId required'});
     const exists = await TopicCompletion.findOne({studentId:req.user._id, topicId});
     if(exists) return res.json(exists);
-    const doc = await TopicCompletion.create({studentId:req.user._id, topicId});
-    res.json(doc);
+    const comp = await TopicCompletion.create({studentId:req.user._id, topicId, subject, grade});
+    res.json(comp);
   }catch(e){ res.status(500).json({msg:'Server error'}); }
-});
-
-// Practice scores
-router.get('/practice', auth, async (req,res)=>{
-  const list = await PracticeScore.find({studentId:req.user._id}).sort({completedAt:-1});
-  res.json(list);
 });
 
 router.post('/practice', auth, async (req,res)=>{
   try{
-    const {topicId, score} = req.body;
-    const doc = await PracticeScore.create({studentId:req.user._id, topicId, score});
-    res.json(doc);
-  }catch(e){ res.status(500).json({msg:'Server error'}); }
-});
-
-// Concept understanding
-router.get('/concepts/:topicId', auth, async (req,res)=>{
-  const doc = await ConceptUnderstand.findOne({studentId:req.user._id, topicId:req.params.topicId});
-  res.json(doc||{understood:[]});
-});
-
-router.post('/concepts', auth, async (req,res)=>{
-  try{
-    const {topicId, understood} = req.body;
-    let doc = await ConceptUnderstand.findOne({studentId:req.user._id, topicId});
-    if(!doc) doc = await ConceptUnderstand.create({studentId:req.user._id, topicId, understood});
-    else { doc.understood = understood; await doc.save(); }
-    res.json(doc);
+    const {topicId, subject, score, total, answers} = req.body;
+    const entry = await PracticeScore.create({studentId:req.user._id, topicId, subject, score, total, answers});
+    res.json(entry);
   }catch(e){ res.status(500).json({msg:'Server error'}); }
 });
 
 module.exports = router;
+
