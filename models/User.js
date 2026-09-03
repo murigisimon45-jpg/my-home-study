@@ -6,7 +6,9 @@ const UserSchema = new mongoose.Schema({
   middleName:String,
   fullName:String,
   grade:{type:String, enum:['Grade 8','Grade 9']},
-  teacherId:{type:String, required:true}, // TCH-XXX, for student it's teacher's id, for teacher it's own id
+  teacherId:{type:String, required:true}, // Primary teacher ID for student, own ID for teacher
+  teacherIds:{type:[String], default:[]}, // All teacher IDs for student (multi-teacher support)
+  teacherNames:{type:Map, of:String, default:{}}, // Map of teacherId -> teacherName
   teacherName:String,
   school:String,
   phone:String,
@@ -17,4 +19,21 @@ const UserSchema = new mongoose.Schema({
 });
 UserSchema.index({email:1});
 UserSchema.index({teacherId:1});
+UserSchema.index({teacherIds:1});
+
+// Before save, ensure teacherIds includes teacherId for students
+UserSchema.pre('save', function(next){
+  if(this.role==='student'){
+    if(!this.teacherIds || this.teacherIds.length===0){
+      this.teacherIds = [this.teacherId];
+    } else if(!this.teacherIds.includes(this.teacherId)){
+      this.teacherIds.unshift(this.teacherId);
+    }
+    // Deduplicate
+    this.teacherIds = [...new Set(this.teacherIds.map(id=>id.toUpperCase()))];
+  }
+  next();
+});
+
 module.exports = mongoose.model('User', UserSchema);
+
