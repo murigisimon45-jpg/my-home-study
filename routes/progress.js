@@ -4,17 +4,27 @@ const { TopicCompletion, PracticeScore, ConceptUnderstand } = require('../models
 const User = require('../models/User');
 const router = express.Router();
 
-// Get students for teacher with their progress aggregates
+// Get students for teacher - now includes students who added this teacher (multi-teacher support)
 router.get('/teacher/students', auth, async (req,res)=>{
   try{
     if(req.user.role!=='teacher') return res.status(403).json({msg:'Only teachers'});
-    const students = await User.find({role:'student', teacherId:req.user.teacherId}).select('-password');
+    // Find students where teacherId matches OR teacherIds array contains teacher's ID
+    const students = await User.find({
+      role:'student',
+      $or:[
+        {teacherId:req.user.teacherId},
+        {teacherIds:req.user.teacherId}
+      ]
+    }).select('-password');
+    
     const results = [];
     for(let stu of students){
       const completions = await TopicCompletion.countDocuments({studentId:stu._id});
       const practices = await PracticeScore.find({studentId:stu._id});
       const avg = practices.length ? Math.round(practices.reduce((a,b)=>a+b.score,0)/practices.length) : 0;
-      results.push({student:stu, completions, practicesCount:practices.length, avgPractice:avg});
+      // Determine if primary or added teacher
+      const isPrimary = stu.teacherId===req.user.teacherId;
+      results.push({student:stu, completions, practicesCount:practices.length, avgPractice:avg, isPrimary, allTeachers:stu.teacherIds||[stu.teacherId]});
     }
     res.json(results);
   }catch(e){
