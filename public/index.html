@@ -934,7 +934,7 @@ function renderStudent(){
   <div class="card" style="padding:10px 14px"><div style="font-size:11px;color:var(--muted)">Avg Score</div><div style="font-weight:800">${mySubmissions.filter(s=>s.status==='Graded').length?Math.round(mySubmissions.filter(s=>s.status==='Graded').reduce((a,b)=>a+b.score,0)/mySubmissions.filter(s=>s.status==='Graded').reduce((a,b)=>{const ass=assignments.find(x=>x.id===b.assignmentId);return a+(ass?.totalMarks||0)},0)*100):0}%</div></div>
   </div>
   ${recentGraded.length?`<div class="card" style="padding:14px;background:#f0fdf4;border:1px solid #bbf7d0;margin-bottom:12px"><div style="font-weight:700;font-size:13px;margin-bottom:8px">🎉 Grade Notifications</div>${recentGraded.map(s=>{const ass=assignments.find(a=>a.id===s.assignmentId); return `<div style="display:flex;justify-content:space-between;background:white;padding:10px;border-radius:10px;margin-bottom:6px;align-items:center"><div><div style="font-weight:600;font-size:13px">${ass?.title||''} - Graded! 🎉</div><div style="font-size:11px;color:var(--muted)">Score: ${s.score}/${ass?.totalMarks||''} (${ass?.totalMarks?Math.round(s.score/ass.totalMarks*100):0}%) • ${s.feedback||'Great job!'}</div><div style="font-size:10px;color:var(--muted)">${new Date(s.gradedAt).toLocaleString()}</div></div><div style="background:var(--success);color:white;padding:6px 10px;border-radius:999px;font-weight:700;font-size:12px">${s.score}</div></div>`}).join('')}</div>`:''}
-  <div style="display:grid;gap:10px">${myAssignments.map(a=>{const sub=mySubmissions.find(s=>s.assignmentId===a._id || s.assignmentId===a.id || s.assignmentId?._id===a._id || s.assignmentId?._id===a.id); const status=sub?sub.status:'Not Started'; let statusColor='var(--muted)'; if(status==='Graded') statusColor='var(--success)'; else if(status==='Submitted') statusColor='var(--primary)'; else if(status==='In Progress') statusColor='var(--warning)'; const isSubmitted = status==='Submitted'; const isGraded = status==='Graded'; return `<div class="card" style="padding:14px;${isSubmitted?'background:#fffbeb;border:1px solid #fcd34d':''}"><div style="display:flex;justify-content:space-between"><div><div style="font-weight:700">${a.title} ${isSubmitted?'<span style="font-size:11px;background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:999px;margin-left:6px">🔒 Locked</span>':''}</div><div style="font-size:11px;color:var(--muted)">${a.subject||''} • ${a.totalMarks} marks • ${a.questions?.length||0} Qs • Due ${a.dueDate?new Date(a.dueDate).toLocaleDateString():'No due date'}</div><div style="font-size:12px;margin-top:6px;color:var(--muted)">${a.description||''}</div></div><div style="text-align:right"><div style="background:${statusColor};color:white;padding:3px 8px;border-radius:999px;font-size:10px;font-weight:600">${status}</div>${sub&&sub.status==='Graded'?`<div style="font-size:12px;font-weight:700;margin-top:6px">${sub.score}/${a.totalMarks} (${Math.round(sub.score/a.totalMarks*100)}%)</div><div style="font-size:10px;color:var(--muted)">${sub.feedback||''}</div>`:''}</div></div><div style="margin-top:10px;display:flex;gap:6px">${isSubmitted?`<button class="btn btn-ghost" style="padding:6px 12px;font-size:12px;background:#fef3c7;color:#92400e;border:1px solid #fcd34d" disabled>🔒 Submitted - Cannot Edit Until Graded</button><button class="btn btn-ghost" style="padding:6px 12px;font-size:12px" onclick="selAssign='${a._id || a.id}'";renderAssignmentDetail()">View (Read-Only)</button>`:isGraded?`<button class="btn btn-outline" style="padding:6px 12px;font-size:12px" onclick="selAssign='${a._id || a.id}'";renderAssignmentDetail()">View Grade</button>`: `<button class="btn ${status==='Not Started'?'btn-primary':'btn-outline'}" style="padding:6px 12px;font-size:12px" onclick="startAssignment('${a._id || a.id}')">${status==='Not Started'?'Start':'Continue'}</button>`}</div></div>`}).join('')||'<div class="card" style="padding:20px;text-align:center;color:var(--muted)">No assignments yet from your teacher<br><span style="font-size:11px">Your teacher will create assignments for Grade ${grade}</span></div>'}</div>
+  <div style="display:grid;gap:10px">${myAssignments.map(a=>{const sub=mySubmissions.find(s=>s.assignmentId===a.id); const status=sub?sub.status:'Not Started'; let statusColor='var(--muted)'; if(status==='Graded') statusColor='var(--success)'; else if(status==='Submitted') statusColor='var(--primary)'; else if(status==='In Progress') statusColor='var(--warning)'; const isSubmitted = status==='Submitted'; const isGraded = status==='Graded'; return `<div class="card" style="padding:14px;${isSubmitted?'background:#fffbeb;border:1px solid #fcd34d':''}"><div style="display:flex;justify-content:space-between"><div><div style="font-weight:700">${a.title} ${isSubmitted?'<span style="font-size:11px;background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:999px;margin-left:6px">🔒 Locked</span>':''}</div><div style="font-size:11px;color:var(--muted)">${a.subject||''} • ${a.totalMarks} marks • ${a.questions?.length||0} Qs • Due ${a.dueDate?new Date(a.dueDate).toLocaleDateString():'No due date'}</div><div style="font-size:12px;margin-top:6px;color:var(--muted)">${a.description||''}</div></div><div style="text-align:right"><div style="background:${statusColor};color:white;padding:3px 8px;border-radius:999px;font-size:10px;font-weight:600">${status}</div>${sub&&sub.status==='Graded'?`<div style="font-size:12px;font-weight:700;margin-top:6px">${sub.score}/${a.totalMarks} (${Math.round(sub.score/a.totalMarks*100)}%)</div><div style="font-size:10px;color:var(--muted)">${sub.feedback||''}</div>`:''}</div></div><div style="margin-top:10px;display:flex;gap:6px">${isSubmitted?`<button class="btn btn-ghost" style="padding:6px 12px;font-size:12px;background:#fef3c7;color:#92400e;border:1px solid #fcd34d" disabled>🔒 Submitted - Cannot Edit Until Graded</button><button class="btn btn-ghost" style="padding:6px 12px;font-size:12px" onclick="selAssign='${a._id || a.id}';renderAssignmentDetail()">View (Read-Only)</button>`:isGraded?`<button class="btn btn-outline" style="padding:6px 12px;font-size:12px" onclick="selAssign='${a._id || a.id}';renderAssignmentDetail()">View Grade</button>`: `<button class="btn ${status==='Not Started'?'btn-primary':'btn-outline'}" style="padding:6px 12px;font-size:12px" onclick="startAssignment('${a._id || a.id}')">${status==='Not Started'?'Start':'Continue'}</button>`}</div></div>`}).join('')||'<div class="card" style="padding:20px;text-align:center;color:var(--muted)">No assignments yet from your teacher<br><span style="font-size:11px">Your teacher will create assignments for Grade ${grade}</span></div>'}</div>
   <div id="assignment_detail_modal" style="display:none"></div>
   `;
  } else if(currentSubPage==='practice'){
@@ -1014,20 +1014,11 @@ function renderStudent(){
 
 // Additional functions for student assignments
 function startAssignment(id){
- if(!id || id==='undefined' || id==='null'){
-   showToast('Assignment ID error - please refresh page');
-   return;
- }
  const assignments=(USE_BACKEND ? cache.assignments : LS.get('mhs_assignments',[]));
  const submissions=(USE_BACKEND ? cache.submissions : LS.get('mhs_submissions',[]));
- let sub=submissions.find(s=> {
-   const aid = s.assignmentId?._id || s.assignmentId;
-   const sid = s.studentId?._id || s.studentId;
-   const curId = currentUser._id || currentUser.id;
-   return (aid===id || s.assignmentId===id) && (sid===curId || s.studentId===curId || sid===currentUser.id);
- });
+ let sub=submissions.find(s=>s.assignmentId===id && s.studentId===currentUser.id);
  if(sub && sub.status==='Submitted'){
-  showToast('Already submitted - waiting for grade');
+  showToast('🔒 Already submitted - cannot edit until teacher grades');
   selAssign=id;
   renderAssignmentDetail();
   return;
@@ -1037,10 +1028,12 @@ function startAssignment(id){
   renderAssignmentDetail();
   return;
  }
- const ass=assignments.find(a=>a._id===id || a.id===id);
- if(!ass){
-   showToast('Assignment not found - refresh page');
-   return;
+ const ass=assignments.find(a=>(a._id||a.id)===id);
+ if(!ass) return;
+ if(!sub){
+  sub={id:'sub_'+Date.now(),assignmentId:id,studentId:currentUser.id,answers:[],status:'In Progress',score:0,submittedAt:new Date().toISOString()};
+  submissions.push(sub);
+  LS.set('mhs_submissions',submissions);
  }
  selAssign=id;
  currentSubPage='assignmentDetail';
@@ -1052,8 +1045,8 @@ function startAssignment(id){
 function renderAssignmentDetail(){
  const assignments=(USE_BACKEND ? cache.assignments : LS.get('mhs_assignments',[]));
  const submissions=(USE_BACKEND ? cache.submissions : LS.get('mhs_submissions',[]));
- const ass=assignments.find(a=>a._id===selAssign || a.id===selAssign);
- const sub=submissions.find(s=> (s.assignmentId===selAssign || s.assignmentId?._id===selAssign) && (s.studentId===currentUser.id || s.studentId?._id===currentUser.id || s.studentId===currentUser._id));
+ const ass=assignments.find(a=>(a._id||a.id)===selAssign);
+ const sub=submissions.find(s=>s.assignmentId===selAssign || s.assignmentId?._id===selAssign && s.studentId===currentUser.id);
  if(!ass) {currentSubPage='assignments';renderStudent();return}
  
  let answersMap={};
@@ -1470,24 +1463,20 @@ function updateGradingTotal(){
  if(el) el.innerText='Total '+total;
 }
 async function saveAssignmentProgress(){
- const ass = (USE_BACKEND ? cache.assignments : LS.get('mhs_assignments',[])).find(a=> (a._id||a.id)===selAssign);
- if(!ass){ showToast('Assignment not found'); return; }
+ const ass = (USE_BACKEND ? cache.assignments : (USE_BACKEND ? cache.assignments : LS.get('mhs_assignments',[]))).find(a=> (a._id||a.id)===selAssign);
+ if(!ass) return;
  let answers=[];
- ass.questions.forEach(q=>{
-   const el=document.getElementById('ans_'+q.id);
-   const val=el?el.value:'';
-   answers.push({qId:q.id, answer:val});
- });
+ ass.questions.forEach(q=>{const val=document.getElementById('ans_'+q.id).value; answers.push({qId:q.id, answer:val})});
  try{
    if(USE_BACKEND){
      await apiFetch('/submissions','POST',{assignmentId: ass._id || ass.id, answers, status:'In Progress'}, true);
-     showToast('Progress saved - not submitted yet');
+     showToast('Progress saved');
      await loadBackendData();
    } else {
-     const submissions=LS.get('mhs_submissions',[]);
-     let sub=submissions.find(s=>s.assignmentId===selAssign && s.studentId===currentUser.id);
+     const submissions=(USE_BACKEND ? cache.submissions : LS.get('mhs_submissions',[]));
+     let sub=submissions.find(s=>s.assignmentId===selAssign || s.assignmentId?._id===selAssign && s.studentId===currentUser.id);
      if(sub){sub.answers=answers; sub.status='In Progress';}
-     else {sub={id:'sub_'+Date.now(),assignmentId:selAssign,studentId:currentUser.id,answers:answers,status:'In Progress',score:0}; submissions.push(sub);}
+     else {sub={id:'sub_'+Date.now(),assignmentId:selAssign,studentId:currentUser.id,answers:answers,status:'In Progress',score:0} ; submissions.push(sub);}
      LS.set('mhs_submissions',submissions);
      showToast('Progress saved');
    }
@@ -1495,33 +1484,23 @@ async function saveAssignmentProgress(){
 }
 
 async function submitAssignment(){
- const ass = (USE_BACKEND ? cache.assignments : LS.get('mhs_assignments',[])).find(a=> (a._id||a.id)===selAssign);
- if(!ass){ showToast('Assignment not found'); return; }
+ const ass = (USE_BACKEND ? cache.assignments : (USE_BACKEND ? cache.assignments : LS.get('mhs_assignments',[]))).find(a=> (a._id||a.id)===selAssign);
+ if(!ass) return;
  let answers=[]; let hasEmpty=false;
- ass.questions.forEach(q=>{
-   const el=document.getElementById('ans_'+q.id);
-   const val=el?el.value:'';
-   if(!val.trim()) hasEmpty=true;
-   answers.push({qId:q.id, answer:val});
- });
- if(hasEmpty && !confirm('Some answers empty. Submit anyway?')){
-   return;
- }
- if(!confirm('Submit assignment? You cannot edit until teacher grades.')){
-   return;
- }
+ ass.questions.forEach(q=>{const val=document.getElementById('ans_'+q.id).value; if(!val.trim()) hasEmpty=true; answers.push({qId:q.id, answer:val})});
+ if(hasEmpty && !confirm('Some answers empty. Submit anyway?')) return;
  try{
    if(USE_BACKEND){
      await apiFetch('/submissions','POST',{assignmentId: ass._id || ass.id, answers, status:'Submitted'}, true);
-     showToast('Submitted! Waiting for grade');
+     showToast('Submitted!');
      currentSubPage='assignments';
      await loadBackendData();
      renderStudent();
    } else {
-     const submissions=LS.get('mhs_submissions',[]);
-     let sub=submissions.find(s=>s.assignmentId===selAssign && s.studentId===currentUser.id);
+     const submissions=(USE_BACKEND ? cache.submissions : LS.get('mhs_submissions',[]));
+     let sub=submissions.find(s=>s.assignmentId===selAssign || s.assignmentId?._id===selAssign && s.studentId===currentUser.id);
      if(sub){sub.answers=answers; sub.status='Submitted';}
-     else {sub={id:'sub_'+Date.now(),assignmentId:selAssign,studentId:currentUser.id,answers:answers,status:'Submitted',score:0}; submissions.push(sub);}
+     else {sub={id:'sub_'+Date.now(),assignmentId:selAssign,studentId:currentUser.id,answers:answers,status:'Submitted',score:0} ; submissions.push(sub);}
      LS.set('mhs_submissions',submissions);
      showToast('Submitted!');
      currentSubPage='assignments';
