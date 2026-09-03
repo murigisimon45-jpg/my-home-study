@@ -1175,32 +1175,18 @@ function renderStudent(){
 
 // Additional functions for student assignments
 function startAssignment(id){
- const assignments=(USE_BACKEND ? cache.assignments : LS.get('mhs_assignments',[]));
- const submissions=(USE_BACKEND ? cache.submissions : LS.get('mhs_submissions',[]));
- let sub=submissions.find(s=> (s.assignmentId===id || s.assignmentId?._id===id || (s.assignmentId && s.assignmentId._id===id) ) && (s.studentId===currentUser.id || s.studentId?._id===currentUser.id || s.studentId===currentUser._id || (s.studentId && s.studentId._id===currentUser.id) ));
- if(sub && sub.status==='Submitted'){
-  showToast('🔒 Already submitted - cannot edit until teacher grades');
-  selAssign=id;
-  renderAssignmentDetail();
+ if(!id || id==='undefined' || id==='null' || id===''){
+  showToast('Assignment ID error');
   return;
  }
- if(sub && sub.status==='Graded'){
-  selAssign=id;
-  renderAssignmentDetail();
-  return;
- }
- const ass=assignments.find(a=>a._id===id || a.id===id);
+ const assignments = USE_BACKEND ? cache.assignments : LS.get('mhs_assignments',[]);
+ const ass = assignments.find(a=> (a._id||a.id)===id);
  if(!ass){
-   showToast('Assignment not found');
-   return;
+  showToast('Assignment not found');
+  return;
  }
- if(!sub && !USE_BACKEND){
-  sub={id:'sub_'+Date.now(),assignmentId:id,studentId:currentUser.id,answers:[],status:'In Progress',score:0,submittedAt:new Date().toISOString()};
-  submissions.push(sub);
-  LS.set('mhs_submissions',submissions);
- }
- selAssign=id;
- currentSubPage='assignmentDetail';
+ selAssign = id;
+ currentSubPage = 'assignmentDetail';
  renderAssignmentDetail();
 }
 
@@ -1645,63 +1631,60 @@ function updateGradingTotal(totalMarks){
   }
 }
 async function saveAssignmentProgress(){
- const ass = (USE_BACKEND ? cache.assignments : LS.get('mhs_assignments',[])).find(a=> (a._id||a.id)===selAssign);
+ const assignments = USE_BACKEND ? cache.assignments : LS.get('mhs_assignments',[]);
+ const ass = assignments.find(a=> (a._id||a.id)===selAssign);
  if(!ass){ showToast('Assignment not found'); return; }
  let answers=[];
- ass.questions.forEach(q=>{
-   const el=document.getElementById('ans_'+q.id);
-   const val=el?el.value:'';
-   answers.push({qId:q.id, answer:val});
- });
+ for(let q of ass.questions){
+  const el=document.getElementById('ans_'+q.id);
+  answers.push({qId:q.id, answer: el?el.value:''});
+ }
  try{
-   if(USE_BACKEND){
-     await apiFetch('/submissions','POST',{assignmentId: ass._id || ass.id, answers, status:'In Progress'}, true);
-     showToast('Progress saved - not submitted yet');
-     await loadBackendData();
-   } else {
-     const submissions=LS.get('mhs_submissions',[]);
-     let sub=submissions.find(s=>s.assignmentId===selAssign && s.studentId===currentUser.id);
-     if(sub){sub.answers=answers; sub.status='In Progress';}
-     else {sub={id:'sub_'+Date.now(),assignmentId:selAssign,studentId:currentUser.id,answers:answers,status:'In Progress',score:0}; submissions.push(sub);}
-     LS.set('mhs_submissions',submissions);
-     showToast('Progress saved');
-   }
+  if(USE_BACKEND){
+   await apiFetch('/submissions','POST',{assignmentId: ass._id || ass.id, answers, status:'In Progress'}, true);
+   showToast('Progress saved - NOT submitted');
+   await loadBackendData();
+  } else {
+   const subs=LS.get('mhs_submissions',[]);
+   let sub=subs.find(s=>s.assignmentId===selAssign && s.studentId===currentUser.id);
+   if(sub){ sub.answers=answers; sub.status='In Progress'; }
+   else { sub={id:'sub_'+Date.now(),assignmentId:selAssign,studentId:currentUser.id,answers,status:'In Progress',score:0}; subs.push(sub); }
+   LS.set('mhs_submissions',subs);
+   showToast('Progress saved');
+  }
  }catch(e){ showToast(e.message); }
 }
 
 async function submitAssignment(){
- const ass = (USE_BACKEND ? cache.assignments : LS.get('mhs_assignments',[])).find(a=> (a._id||a.id)===selAssign);
+ const assignments = USE_BACKEND ? cache.assignments : LS.get('mhs_assignments',[]);
+ const ass = assignments.find(a=> (a._id||a.id)===selAssign);
  if(!ass){ showToast('Assignment not found'); return; }
  let answers=[]; let hasEmpty=false;
- ass.questions.forEach(q=>{
-   const el=document.getElementById('ans_'+q.id);
-   const val=el?el.value:'';
-   if(!val.trim()) hasEmpty=true;
-   answers.push({qId:q.id, answer:val});
- });
- if(hasEmpty && !confirm('Some answers empty. Submit anyway?')){
-   return;
+ for(let q of ass.questions){
+  const el=document.getElementById('ans_'+q.id);
+  const v=el?el.value:'';
+  if(!v.trim()) hasEmpty=true;
+  answers.push({qId:q.id, answer:v});
  }
- if(!confirm('Submit assignment? You cannot edit until teacher grades.')){
-   return;
- }
+ if(hasEmpty && !confirm('Some answers empty. Submit anyway?')) return;
+ if(!confirm('Submit assignment? You cannot edit until teacher grades.')) return;
  try{
-   if(USE_BACKEND){
-     await apiFetch('/submissions','POST',{assignmentId: ass._id || ass.id, answers, status:'Submitted'}, true);
-     showToast('Submitted! Waiting for grade');
-     currentSubPage='assignments';
-     await loadBackendData();
-     renderStudent();
-   } else {
-     const submissions=LS.get('mhs_submissions',[]);
-     let sub=submissions.find(s=>s.assignmentId===selAssign && s.studentId===currentUser.id);
-     if(sub){sub.answers=answers; sub.status='Submitted';}
-     else {sub={id:'sub_'+Date.now(),assignmentId:selAssign,studentId:currentUser.id,answers:answers,status:'Submitted',score:0}; submissions.push(sub);}
-     LS.set('mhs_submissions',submissions);
-     showToast('Submitted!');
-     currentSubPage='assignments';
-     renderStudent();
-   }
+  if(USE_BACKEND){
+   await apiFetch('/submissions','POST',{assignmentId: ass._id || ass.id, answers, status:'Submitted'}, true);
+   showToast('Submitted - waiting for teacher grade');
+   currentSubPage='assignments';
+   await loadBackendData();
+   renderStudent();
+  } else {
+   const subs=LS.get('mhs_submissions',[]);
+   let sub=subs.find(s=>s.assignmentId===selAssign && s.studentId===currentUser.id);
+   if(sub){ sub.answers=answers; sub.status='Submitted'; }
+   else { sub={id:'sub_'+Date.now(),assignmentId:selAssign,studentId:currentUser.id,answers,status:'Submitted',score:0}; subs.push(sub); }
+   LS.set('mhs_submissions',subs);
+   showToast('Submitted');
+   currentSubPage='assignments';
+   renderStudent();
+  }
  }catch(e){ showToast(e.message); }
 }
 
