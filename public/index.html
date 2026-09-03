@@ -121,6 +121,26 @@ function logout(){
  render();
 }
 
+function calculateTotalMarks(questions){
+  if(!questions || !questions.length) return 0;
+  return questions.reduce((sum,q)=>sum+(parseInt(q.marks)||parseInt(q.totalMarks)||0),0);
+}
+function calculateScore(perQuestion){
+  if(!perQuestion) return 0;
+  if(perQuestion instanceof Map){
+    let sum=0;
+    perQuestion.forEach(v=>sum+=parseInt(v)||0);
+    return sum;
+  }
+  return Object.values(perQuestion).reduce((sum,v)=>sum+(parseInt(v)||0),0);
+}
+function getTotalMarksFromAss(ass){
+  if(!ass) return 0;
+  if(ass.totalMarks) return parseInt(ass.totalMarks)||0;
+  return calculateTotalMarks(ass.questions||[]);
+}
+
+
 function getTimeGreeting(){
   const h = new Date().getHours();
   if(h < 12) return 'Good morning';
@@ -291,6 +311,146 @@ function checkStudyReminder(){
     }
   }
 }
+
+
+// ===== MULTI-TEACHER SUPPORT FOR STUDENTS =====
+let activeTeacherFilter = null; // null = show all, or teacherId to filter
+let myTeachersCache = [];
+
+async function loadMyTeachers(){
+  if(!USE_BACKEND || !currentUser || currentUser.role!=='student') return [];
+  try{
+    const data = await apiFetch('/auth/student/my-teachers','GET',null,true);
+    myTeachersCache = data.teachers||[];
+    // Update currentUser teacherIds if needed
+    if(data.teacherIds && data.teacherIds.length){
+      currentUser.teacherIds = data.teacherIds;
+      setUserCache(currentUser);
+    }
+    return data.teachers||[];
+  }catch(e){
+    console.log('Load teachers failed', e.message);
+    // Fallback: create teachers from teacherIds
+    const ids = currentUser.teacherIds||[currentUser.teacherId];
+    myTeachersCache = ids.map(id=>({teacherId:id, fullName: currentUser.teacherNames?.[id] || currentUser.teacherName || id, school:''}));
+    return myTeachersCache;
+  }
+}
+
+async function addNewTeacher(){
+  const teacherId = prompt('Enter Teacher ID to add (e.g., TCH-123):');
+  if(!teacherId) return;
+  if(!/^TCH-\d{3}$/i.test(teacherId.trim())){
+    showToast('Invalid Teacher ID format - should be TCH-XXX');
+    return;
+  }
+  const tid = teacherId.trim().toUpperCase();
+  // Check if already added
+  const existingIds = currentUser.teacherIds||[currentUser.teacherId];
+  if(existingIds.includes(tid)){
+    showToast('Teacher already added');
+    return;
+  }
+  try{
+    if(USE_BACKEND){
+      const result = await apiFetch('/auth/student/add-teacher','POST',{teacherId:tid},true);
+      showToast(`✅ Added teacher: ${result.addedTeacher.fullName} (${tid})`);
+      // Update cache
+      currentUser.teacherIds = result.teacherIds;
+      setUserCache(currentUser);
+      await loadMyTeachers();
+      await loadBackendData();
+      renderStudent();
+    } else {
+      // Local mode
+      if(!currentUser.teacherIds) currentUser.teacherIds = [currentUser.teacherId];
+      currentUser.teacherIds.push(tid);
+      currentUser.teacherIds = [...new Set(currentUser.teacherIds)];
+      LS.set('mhs_users', LS.get('mhs_users',[]).map(u=>u.id===currentUser.id?currentUser:u));
+      setUserCache(currentUser);
+      showToast(`Added teacher ${tid}`);
+      renderStudent();
+    }
+  }catch(e){
+    showToast(e.message);
+  }
+}
+
+async function removeTeacher(teacherId){
+  if(!teacherId) return;
+  const tid = teacherId.toUpperCase();
+  if(tid===currentUser.teacherId){
+    showToast('Cannot remove primary teacher');
+    return;
+  }
+  if(!confirm(`Remove teacher ${tid}? You will no longer see their assignments.`)){
+    return;
+  }
+  try{
+    if(USE_BACKEND){
+      const result = await apiFetch('/auth/student/remove-teacher','POST',{teacherId:tid},true);
+      showToast('Teacher removed');
+      currentUser.teacherIds = result.teacherIds;
+      setUserCache(currentUser);
+      if(activeTeacherFilter===tid) activeTeacherFilter=null;
+      await loadMyTeachers();
+      await loadBackendData();
+      renderStudent();
+    } else {
+      currentUser.teacherIds = (currentUser.teacherIds||[]).filter(id=>id!==tid);
+      setUserCache(currentUser);
+      showToast('Teacher removed');
+      renderStudent();
+    }
+  }catch(e){ showToast(e.message); }
+}
+
+function switchTeacherFilter(teacherId){
+  if(activeTeacherFilter===teacherId){
+    activeTeacherFilter=null; // show all
+  } else {
+    activeTeacherFilter=teacherId;
+  }
+  renderStudent();
+}
+
+function renderTeachersSection(){
+  const teachers = myTeachersCache.length ? myTeachersCache : (currentUser.teacherIds||[currentUser.teacherId]).map(id=>({teacherId:id, fullName: currentUser.teacherNames?.[id] || currentUser.teacherName || 'Teacher '+id, school:''}));
+  const activeId = activeTeacherFilter;
+  
+  return `
+  <div class="card" style="padding:16px;margin-bottom:16px;background:linear-gradient(135deg,#f0f9ff,#e0f2fe);border:1px solid #bae6fd">
+  <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px">
+  <div><h3 style="font-weight:700;font-size:14px">👨‍🏫 My Teachers (${teachers.length}) - Unlimited</h3><div style="font-size:11px;color:var(--muted);margin-top:2px">Add teachers by ID to get assignments from different subjects. You are tracked by all teachers.</div></div>
+  <button class="btn btn-primary" style="padding:8px 14px;font-size:12px" onclick="addNewTeacher()">+ Add Teacher by ID</button>
+  </div>
+  <div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;margin-top:12px">
+  ${teachers.map(t=>{
+    const isActive = activeTeacherFilter===t.teacherId;
+    const isPrimary = t.teacherId===currentUser.teacherId;
+    const assignmentCount = (USE_BACKEND ? cache.assignments : LS.get('mhs_assignments',[])).filter(a=>a.teacherId===t.teacherId).length;
+    return `<div style="padding:12px;background:${isActive?'var(--primary)':'white'};color:${isActive?'white':'var(--text)'};border:2px solid ${isActive?'var(--primary)': isPrimary?'var(--success)':'var(--border)'};border-radius:12px;cursor:pointer;transition:.2s" onclick="switchTeacherFilter('${t.teacherId}')">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start">
+    <div style="font-weight:700;font-size:13px">${t.fullName||'Teacher'}</div>
+    ${isPrimary?'<span style="font-size:9px;background:var(--success);color:white;padding:2px 6px;border-radius:999px">PRIMARY</span>':''}
+    </div>
+    <div style="font-size:11px;color:${isActive?'rgba(255,255,255,.8)':'var(--muted)'};margin-top:2px">${t.teacherId} • ${t.school||'School'}</div>
+    <div style="font-size:11px;margin-top:6px;display:flex;gap:6px;align-items:center">
+    <span style="background:${isActive?'rgba(255,255,255,.2)':'var(--accent)'};padding:2px 8px;border-radius:999px;font-size:10px">${assignmentCount} assignments</span>
+    ${isActive?'<span style="font-size:10px">✓ Active filter - Click to show all</span>':''}
+    </div>
+    <div style="margin-top:8px;display:flex;gap:6px">
+    <button class="btn ${isActive?'btn-ghost':'btn-outline'}" style="padding:4px 8px;font-size:10px;flex:1;background:${isActive?'rgba(255,255,255,.2)':'transparent'};color:${isActive?'white':'var(--text)'}" onclick="event.stopPropagation(); switchTeacherFilter('${t.teacherId}')">${isActive?'Show All':'Filter'}</button>
+    ${!isPrimary?`<button class="btn btn-ghost" style="padding:4px 8px;font-size:10px;color:${isActive?'white':'var(--danger)'}" onclick="event.stopPropagation(); removeTeacher('${t.teacherId}')">Remove</button>`:''}
+    </div>
+    </div>`;
+  }).join('')}
+  </div>
+  ${activeTeacherFilter?`<div style="margin-top:10px;padding:8px;background:white;border-radius:8px;font-size:11px;color:var(--primary);font-weight:600">🔍 Filtering assignments from ${activeTeacherFilter} only • <button style="background:none;border:0;color:var(--primary);font-weight:700;cursor:pointer;text-decoration:underline" onclick="switchTeacherFilter('${activeTeacherFilter}')">Show All Teachers</button></div>`:''}
+  </div>
+  `;
+}
+
 
 function initNotificationSystem(){
   requestNotificationPermission();
@@ -899,6 +1059,7 @@ function renderStudent(){
   mainContent=`
   <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px"><div><h1 style="font-size:26px;font-weight:800">${getTimeGreeting()}, ${currentUser.firstName} 👋</h1><div id="live_clock" style="font-size:13px;color:var(--primary);font-weight:600;margin-top:4px">${getRealTimeString()} • ${getRealDateString()}</div><div style="font-size:13px;color:var(--muted)">Grade ${currentUser.grade?.split(' ')[1]} • ${teacher?.fullName||''} • ${currentUser.teacherId}</div></div><div style="display:flex;gap:8px;align-items:center"><div class="card" style="padding:10px 14px;display:flex;gap:10px;align-items:center"><div style="width:40px;height:40px;border-radius:999px;background:var(--accent);display:grid;place-items:center;font-weight:700">${overall}%</div><div><div style="font-size:11px;color:var(--muted)">Overall</div><div style="font-weight:700;font-size:13px">${doneTopics}/${totalTopics} topics</div></div></div><button class="btn btn-ghost mobile-only" style="padding:8px 10px;font-size:12px" onclick="if(confirm('Log out?')){LS.del('mhs_session');currentPage='landing';render()}">🚪 Logout</button></div></div>
   
+  ${renderTeachersSection()}
   ${recentGraded.length?`<div class="card" style="padding:14px;background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:1px solid #bbf7d0;margin-top:16px"><div style="font-weight:700;font-size:14px;margin-bottom:8px">🎉 Grade Notifications - New Grades!</div>${recentGraded.map(s=>{const ass=assignments.find(a=>a.id===s.assignmentId); return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px;background:white;border-radius:10px;margin-bottom:6px"><div><div style="font-weight:600;font-size:13px">${ass?.title||''} - Graded!</div><div style="font-size:11px;color:var(--muted)">${s.score}/${ass?.totalMarks||''} • ${ass?.totalMarks?Math.round(s.score/ass.totalMarks*100):0}% • ${s.feedback||'Great job!'}</div></div><div style="background:var(--success);color:white;padding:4px 8px;border-radius:999px;font-size:11px;font-weight:700">${s.score}/${ass?.totalMarks||''}</div></div>`}).join('')}<button class="btn btn-ghost" style="margin-top:8px;font-size:12px" onclick="currentSubPage='assignments';renderStudent()">View All Assignments →</button></div>`:''}
   
   <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-top:16px">
@@ -934,7 +1095,7 @@ function renderStudent(){
   <div class="card" style="padding:10px 14px"><div style="font-size:11px;color:var(--muted)">Avg Score</div><div style="font-weight:800">${mySubmissions.filter(s=>s.status==='Graded').length?Math.round(mySubmissions.filter(s=>s.status==='Graded').reduce((a,b)=>a+b.score,0)/mySubmissions.filter(s=>s.status==='Graded').reduce((a,b)=>{const ass=assignments.find(x=>x.id===b.assignmentId);return a+(ass?.totalMarks||0)},0)*100):0}%</div></div>
   </div>
   ${recentGraded.length?`<div class="card" style="padding:14px;background:#f0fdf4;border:1px solid #bbf7d0;margin-bottom:12px"><div style="font-weight:700;font-size:13px;margin-bottom:8px">🎉 Grade Notifications</div>${recentGraded.map(s=>{const ass=assignments.find(a=>a.id===s.assignmentId); return `<div style="display:flex;justify-content:space-between;background:white;padding:10px;border-radius:10px;margin-bottom:6px;align-items:center"><div><div style="font-weight:600;font-size:13px">${ass?.title||''} - Graded! 🎉</div><div style="font-size:11px;color:var(--muted)">Score: ${s.score}/${ass?.totalMarks||''} (${ass?.totalMarks?Math.round(s.score/ass.totalMarks*100):0}%) • ${s.feedback||'Great job!'}</div><div style="font-size:10px;color:var(--muted)">${new Date(s.gradedAt).toLocaleString()}</div></div><div style="background:var(--success);color:white;padding:6px 10px;border-radius:999px;font-weight:700;font-size:12px">${s.score}</div></div>`}).join('')}</div>`:''}
-  <div style="display:grid;gap:10px">${myAssignments.map(a=>{const sub=mySubmissions.find(s=>s.assignmentId===a.id); const status=sub?sub.status:'Not Started'; let statusColor='var(--muted)'; if(status==='Graded') statusColor='var(--success)'; else if(status==='Submitted') statusColor='var(--primary)'; else if(status==='In Progress') statusColor='var(--warning)'; const isSubmitted = status==='Submitted'; const isGraded = status==='Graded'; return `<div class="card" style="padding:14px;${isSubmitted?'background:#fffbeb;border:1px solid #fcd34d':''}"><div style="display:flex;justify-content:space-between"><div><div style="font-weight:700">${a.title} ${isSubmitted?'<span style="font-size:11px;background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:999px;margin-left:6px">🔒 Locked</span>':''}</div><div style="font-size:11px;color:var(--muted)">${a.subject||''} • ${a.totalMarks} marks • ${a.questions?.length||0} Qs • Due ${a.dueDate?new Date(a.dueDate).toLocaleDateString():'No due date'}</div><div style="font-size:12px;margin-top:6px;color:var(--muted)">${a.description||''}</div></div><div style="text-align:right"><div style="background:${statusColor};color:white;padding:3px 8px;border-radius:999px;font-size:10px;font-weight:600">${status}</div>${sub&&sub.status==='Graded'?`<div style="font-size:12px;font-weight:700;margin-top:6px">${sub.score}/${a.totalMarks} (${Math.round(sub.score/a.totalMarks*100)}%)</div><div style="font-size:10px;color:var(--muted)">${sub.feedback||''}</div>`:''}</div></div><div style="margin-top:10px;display:flex;gap:6px">${isSubmitted?`<button class="btn btn-ghost" style="padding:6px 12px;font-size:12px;background:#fef3c7;color:#92400e;border:1px solid #fcd34d" disabled>🔒 Submitted - Cannot Edit Until Graded</button><button class="btn btn-ghost" style="padding:6px 12px;font-size:12px" onclick="selAssign='${a._id || a.id}';renderAssignmentDetail()">View (Read-Only)</button>`:isGraded?`<button class="btn btn-outline" style="padding:6px 12px;font-size:12px" onclick="selAssign='${a._id || a.id}';renderAssignmentDetail()">View Grade</button>`: `<button class="btn ${status==='Not Started'?'btn-primary':'btn-outline'}" style="padding:6px 12px;font-size:12px" onclick="startAssignment('${a._id || a.id}')">${status==='Not Started'?'Start':'Continue'}</button>`}</div></div>`}).join('')||'<div class="card" style="padding:20px;text-align:center;color:var(--muted)">No assignments yet from your teacher<br><span style="font-size:11px">Your teacher will create assignments for Grade ${grade}</span></div>'}</div>
+  <div style="display:grid;gap:10px">${myAssignments.map(a=>{const sub=mySubmissions.find(s=>s.assignmentId===a._id || s.assignmentId===a.id || s.assignmentId?._id===a._id || s.assignmentId?._id===a.id); const status=sub?sub.status:'Not Started'; let statusColor='var(--muted)'; if(status==='Graded') statusColor='var(--success)'; else if(status==='Submitted') statusColor='var(--primary)'; else if(status==='In Progress') statusColor='var(--warning)'; const isSubmitted = status==='Submitted'; const isGraded = status==='Graded'; return `<div class="card" style="padding:14px;${isSubmitted?'background:#fffbeb;border:1px solid #fcd34d':''}"><div style="display:flex;justify-content:space-between"><div><div style="font-weight:700">${a.title} ${isSubmitted?'<span style="font-size:11px;background:#fef3c7;color:#92400e;padding:2px 6px;border-radius:999px;margin-left:6px">🔒 Locked</span>':''}</div><div style="font-size:11px;color:var(--muted)">${a.subject||''} • ${getTotalMarksFromAss(a)} marks • ${a.questions?.length||0} Qs • Due ${a.dueDate?new Date(a.dueDate).toLocaleDateString():'No due date'}</div><div style="font-size:12px;margin-top:6px;color:var(--muted)">${a.description||''}</div></div><div style="text-align:right"><div style="background:${statusColor};color:white;padding:3px 8px;border-radius:999px;font-size:10px;font-weight:600">${status}</div>${sub&&sub.status==='Graded'?`<div style="font-size:12px;font-weight:700;margin-top:6px">${sub.score}/${a.totalMarks} (${Math.round(sub.score/a.totalMarks*100)}%)</div><div style="font-size:10px;color:var(--muted)">${sub.feedback||''}</div>`:''}</div></div><div style="margin-top:10px;display:flex;gap:6px">${isSubmitted?`<button class="btn btn-ghost" style="padding:6px 12px;font-size:12px;background:#fef3c7;color:#92400e;border:1px solid #fcd34d" disabled>🔒 Submitted - Cannot Edit Until Graded</button><button class="btn btn-ghost" style="padding:6px 12px;font-size:12px" onclick="selAssign='${a._id || a.id}'";renderAssignmentDetail()">View (Read-Only)</button>`:isGraded?`<button class="btn btn-outline" style="padding:6px 12px;font-size:12px" onclick="selAssign='${a._id || a.id}'";renderAssignmentDetail()">View Grade</button>`: `<button class="btn ${status==='Not Started'?'btn-primary':'btn-outline'}" style="padding:6px 12px;font-size:12px" onclick="startAssignment('${a._id || a.id}')">${status==='Not Started'?'Start':'Continue'}</button>`}</div></div>`}).join('')||'<div class="card" style="padding:20px;text-align:center;color:var(--muted)">No assignments yet from your teacher<br><span style="font-size:11px">Your teacher will create assignments for Grade ${grade}</span></div>'}</div>
   <div id="assignment_detail_modal" style="display:none"></div>
   `;
  } else if(currentSubPage==='practice'){
@@ -1016,7 +1177,7 @@ function renderStudent(){
 function startAssignment(id){
  const assignments=(USE_BACKEND ? cache.assignments : LS.get('mhs_assignments',[]));
  const submissions=(USE_BACKEND ? cache.submissions : LS.get('mhs_submissions',[]));
- let sub=submissions.find(s=>s.assignmentId===id && s.studentId===currentUser.id);
+ let sub=submissions.find(s=> (s.assignmentId===id || s.assignmentId?._id===id || (s.assignmentId && s.assignmentId._id===id) ) && (s.studentId===currentUser.id || s.studentId?._id===currentUser.id || s.studentId===currentUser._id || (s.studentId && s.studentId._id===currentUser.id) ));
  if(sub && sub.status==='Submitted'){
   showToast('🔒 Already submitted - cannot edit until teacher grades');
   selAssign=id;
@@ -1028,9 +1189,12 @@ function startAssignment(id){
   renderAssignmentDetail();
   return;
  }
- const ass=assignments.find(a=>(a._id||a.id)===id);
- if(!ass) return;
- if(!sub){
+ const ass=assignments.find(a=>a._id===id || a.id===id);
+ if(!ass){
+   showToast('Assignment not found');
+   return;
+ }
+ if(!sub && !USE_BACKEND){
   sub={id:'sub_'+Date.now(),assignmentId:id,studentId:currentUser.id,answers:[],status:'In Progress',score:0,submittedAt:new Date().toISOString()};
   submissions.push(sub);
   LS.set('mhs_submissions',submissions);
@@ -1045,8 +1209,8 @@ function startAssignment(id){
 function renderAssignmentDetail(){
  const assignments=(USE_BACKEND ? cache.assignments : LS.get('mhs_assignments',[]));
  const submissions=(USE_BACKEND ? cache.submissions : LS.get('mhs_submissions',[]));
- const ass=assignments.find(a=>(a._id||a.id)===selAssign);
- const sub=submissions.find(s=>s.assignmentId===selAssign || s.assignmentId?._id===selAssign && s.studentId===currentUser.id);
+ const ass=assignments.find(a=>a._id===selAssign || a.id===selAssign);
+ const sub=submissions.find(s=> (s.assignmentId===selAssign || s.assignmentId?._id===selAssign) && (s.studentId===currentUser.id || s.studentId?._id===currentUser.id || s.studentId===currentUser._id));
  if(!ass) {currentSubPage='assignments';renderStudent();return}
  
  let answersMap={};
@@ -1282,7 +1446,7 @@ function renderTeacher(){
  } else if(currentSubPage==='assignments'){
   mainContent=`
   <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><h2 style="font-size:20px;font-weight:800">Assignments 📝 (${teacherAssignments.length})</h2><button class="btn btn-primary" onclick="showCreateAssignment()">+ Create</button></div>
-  <div style="display:grid;gap:10px">${teacherAssignments.map(a=>{const subs=submissions.filter(s=>s.assignmentId===a._id || s.assignmentId===a.id || s.assignmentId?._id===a._id); const graded=subs.filter(s=>s.status==='Graded').length; return `<div class="card" style="padding:14px"><div style="display:flex;justify-content:space-between"><div><div style="font-weight:700">${a.title}</div><div style="font-size:11px;color:var(--muted)">${a.subject||''} • ${a.grade||''} • ${a.totalMarks} marks • ${a.questions?.length||0} Qs • Due ${a.dueDate?new Date(a.dueDate).toLocaleDateString():''}</div></div><div style="text-align:right"><div style="font-size:11px;color:var(--muted)">${subs.length} subs • ${graded} graded</div><button class="btn btn-ghost" style="padding:4px 8px;font-size:11px;margin-top:4px" onclick="editAssignment('${a._id || a.id}')">Edit</button> <button class="btn btn-ghost" style="padding:4px 8px;font-size:11px;color:var(--danger)" onclick="deleteAssignment('${a._id || a.id}')">Delete</button></div></div><div style="font-size:12px;margin-top:8px;color:var(--muted)">${a.description||''}</div></div>`}).join('')||'<div class="card" style="padding:20px;text-align:center;color:var(--muted)">No assignments yet<br><button class="btn btn-primary" style="margin-top:10px" onclick="showCreateAssignment()">Create First Assignment</button></div>'}
+  <div style="display:grid;gap:10px">${teacherAssignments.map(a=>{const subs=submissions.filter(s=>s.assignmentId===a._id || s.assignmentId===a.id || s.assignmentId?._id===a._id); const graded=subs.filter(s=>s.status==='Graded').length; return `<div class="card" style="padding:14px"><div style="display:flex;justify-content:space-between"><div><div style="font-weight:700">${a.title}</div><div style="font-size:11px;color:var(--muted)">${a.subject||''} • ${a.grade||''} • ${getTotalMarksFromAss(a)} marks • ${a.questions?.length||0} Qs • Due ${a.dueDate?new Date(a.dueDate).toLocaleDateString():''}</div></div><div style="text-align:right"><div style="font-size:11px;color:var(--muted)">${subs.length} subs • ${graded} graded</div><button class="btn btn-ghost" style="padding:4px 8px;font-size:11px;margin-top:4px" onclick="editAssignment('${a._id || a.id}')">Edit</button> <button class="btn btn-ghost" style="padding:4px 8px;font-size:11px;color:var(--danger)" onclick="deleteAssignment('${a._id || a.id}')">Delete</button></div></div><div style="font-size:12px;margin-top:8px;color:var(--muted)">${a.description||''}</div></div>`}).join('')||'<div class="card" style="padding:20px;text-align:center;color:var(--muted)">No assignments yet<br><button class="btn btn-primary" style="margin-top:10px" onclick="showCreateAssignment()">Create First Assignment</button></div>'}
   </div>
   <div id="assignment_modal" style="display:none"></div>
   `;
@@ -1446,7 +1610,7 @@ async function gradeSubmission(subId){
  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px"><h3 style="font-weight:700">Grading: ${stuName}</h3><button class="btn btn-ghost" onclick="document.getElementById('grading_modal_backdrop').remove()">X</button></div>
  <div style="font-size:11px;color:var(--muted);margin-bottom:10px">${ass.title}</div>
  <div style="display:grid;gap:10px" id="grading_qs">
- ${ass.questions.map((q,i)=>`<div style="padding:10px;border:1px solid var(--border);border-radius:10px"><div style="display:flex;justify-content:space-between"><div style="font-weight:600;font-size:12px">Q${i+1}. ${q.text}</div><span style="font-size:10px;background:var(--accent);padding:2px 6px;border-radius:999px">${q.marks}m</span></div><div style="margin-top:6px;background:var(--accent);padding:8px;border-radius:6px;font-size:12px">${answersMap[q.id]||'<em>No answer</em>'}</div><div style="margin-top:6px;display:flex;gap:6px;align-items:center"><span style="font-size:11px">Marks:</span><input class="input" type="number" min="0" max="${q.marks}" style="width:80px" value="${perQ[q.id]}" id="perq_${q.id}" oninput="updateGradingTotal()"></div></div>`).join('')}
+ ${ass.questions.map((q,i)=>`<div style="padding:10px;border:1px solid var(--border);border-radius:10px"><div style="display:flex;justify-content:space-between"><div style="font-weight:600;font-size:12px">Q${i+1}. ${q.text}</div><span style="font-size:10px;background:var(--accent);padding:2px 6px;border-radius:999px">${q.marks}m</span></div><div style="margin-top:6px;background:var(--accent);padding:8px;border-radius:6px;font-size:12px">${answersMap[q.id]||'<em>No answer</em>'}</div><div style="margin-top:6px;display:flex;gap:6px;align-items:center"><span style="font-size:11px">Marks:</span><input class="input" type="number" min="0" max="${q.marks}" style="width:80px" value="${perQ[q.id]}" id="perq_${q.id}" oninput="updateGradingTotal(getTotalMarksFromAss(ass))"></div></div>`).join('')}
  </div>
  <div style="margin-top:12px"><label style="font-size:11px;font-weight:600">Feedback</label><textarea class="input" id="grading_feedback">${sub.feedback||''}</textarea></div>
  <div style="display:flex;justify-content:space-between;margin-top:12px;align-items:center"><div style="font-weight:700;font-size:12px" id="grading_total">Total ${total}</div><button class="btn btn-primary" onclick="submitGrading('${subId}')">Submit Grade</button></div>
@@ -1454,29 +1618,51 @@ async function gradeSubmission(subId){
  `;
  document.body.insertAdjacentHTML('beforeend', modalHtml);
 }
-function updateGradingTotal(){
- const gradingModal=document.getElementById('grading_modal_backdrop');
- if(!gradingModal) return;
- let total=0;
- gradingModal.querySelectorAll('input[id^="perq_"]').forEach(inp=>{total+=parseInt(inp.value)||0});
- const el=document.getElementById('grading_total');
- if(el) el.innerText='Total '+total;
+function updateGradingTotal(totalMarks){
+  const modal=document.getElementById('grading_modal_backdrop');
+  if(!modal) return;
+  let total=0;
+  modal.querySelectorAll('input[id^="perq_"]').forEach(inp=>{
+    const max=parseInt(inp.getAttribute('max'))||0;
+    let val=parseInt(inp.value)||0;
+    if(val>max){ val=max; inp.value=max; }
+    if(val<0){ val=0; inp.value=0; }
+    total+=val;
+  });
+  const totalEl=document.getElementById('grading_total');
+  const percentEl=document.getElementById('grading_percent');
+  const tm = totalMarks || parseInt(modal.getAttribute('data-total-marks')) || 0;
+  if(totalEl){
+    const percent = tm>0?Math.round(total/tm*100):0;
+    totalEl.innerText=`Total: ${total} / ${tm} (${percent}%)`;
+  }
+  if(percentEl){
+    if(total===0) percentEl.innerText='Enter marks per question';
+    else if(total===tm) percentEl.innerText='Perfect score! 🎉';
+    else if(total>=tm*0.8) percentEl.innerText='Excellent work!';
+    else if(total>=tm*0.5) percentEl.innerText='Good effort';
+    else percentEl.innerText='Needs improvement';
+  }
 }
 async function saveAssignmentProgress(){
- const ass = (USE_BACKEND ? cache.assignments : (USE_BACKEND ? cache.assignments : LS.get('mhs_assignments',[]))).find(a=> (a._id||a.id)===selAssign);
- if(!ass) return;
+ const ass = (USE_BACKEND ? cache.assignments : LS.get('mhs_assignments',[])).find(a=> (a._id||a.id)===selAssign);
+ if(!ass){ showToast('Assignment not found'); return; }
  let answers=[];
- ass.questions.forEach(q=>{const val=document.getElementById('ans_'+q.id).value; answers.push({qId:q.id, answer:val})});
+ ass.questions.forEach(q=>{
+   const el=document.getElementById('ans_'+q.id);
+   const val=el?el.value:'';
+   answers.push({qId:q.id, answer:val});
+ });
  try{
    if(USE_BACKEND){
      await apiFetch('/submissions','POST',{assignmentId: ass._id || ass.id, answers, status:'In Progress'}, true);
-     showToast('Progress saved');
+     showToast('Progress saved - not submitted yet');
      await loadBackendData();
    } else {
-     const submissions=(USE_BACKEND ? cache.submissions : LS.get('mhs_submissions',[]));
-     let sub=submissions.find(s=>s.assignmentId===selAssign || s.assignmentId?._id===selAssign && s.studentId===currentUser.id);
+     const submissions=LS.get('mhs_submissions',[]);
+     let sub=submissions.find(s=>s.assignmentId===selAssign && s.studentId===currentUser.id);
      if(sub){sub.answers=answers; sub.status='In Progress';}
-     else {sub={id:'sub_'+Date.now(),assignmentId:selAssign,studentId:currentUser.id,answers:answers,status:'In Progress',score:0} ; submissions.push(sub);}
+     else {sub={id:'sub_'+Date.now(),assignmentId:selAssign,studentId:currentUser.id,answers:answers,status:'In Progress',score:0}; submissions.push(sub);}
      LS.set('mhs_submissions',submissions);
      showToast('Progress saved');
    }
@@ -1484,23 +1670,33 @@ async function saveAssignmentProgress(){
 }
 
 async function submitAssignment(){
- const ass = (USE_BACKEND ? cache.assignments : (USE_BACKEND ? cache.assignments : LS.get('mhs_assignments',[]))).find(a=> (a._id||a.id)===selAssign);
- if(!ass) return;
+ const ass = (USE_BACKEND ? cache.assignments : LS.get('mhs_assignments',[])).find(a=> (a._id||a.id)===selAssign);
+ if(!ass){ showToast('Assignment not found'); return; }
  let answers=[]; let hasEmpty=false;
- ass.questions.forEach(q=>{const val=document.getElementById('ans_'+q.id).value; if(!val.trim()) hasEmpty=true; answers.push({qId:q.id, answer:val})});
- if(hasEmpty && !confirm('Some answers empty. Submit anyway?')) return;
+ ass.questions.forEach(q=>{
+   const el=document.getElementById('ans_'+q.id);
+   const val=el?el.value:'';
+   if(!val.trim()) hasEmpty=true;
+   answers.push({qId:q.id, answer:val});
+ });
+ if(hasEmpty && !confirm('Some answers empty. Submit anyway?')){
+   return;
+ }
+ if(!confirm('Submit assignment? You cannot edit until teacher grades.')){
+   return;
+ }
  try{
    if(USE_BACKEND){
      await apiFetch('/submissions','POST',{assignmentId: ass._id || ass.id, answers, status:'Submitted'}, true);
-     showToast('Submitted!');
+     showToast('Submitted! Waiting for grade');
      currentSubPage='assignments';
      await loadBackendData();
      renderStudent();
    } else {
-     const submissions=(USE_BACKEND ? cache.submissions : LS.get('mhs_submissions',[]));
-     let sub=submissions.find(s=>s.assignmentId===selAssign || s.assignmentId?._id===selAssign && s.studentId===currentUser.id);
+     const submissions=LS.get('mhs_submissions',[]);
+     let sub=submissions.find(s=>s.assignmentId===selAssign && s.studentId===currentUser.id);
      if(sub){sub.answers=answers; sub.status='Submitted';}
-     else {sub={id:'sub_'+Date.now(),assignmentId:selAssign,studentId:currentUser.id,answers:answers,status:'Submitted',score:0} ; submissions.push(sub);}
+     else {sub={id:'sub_'+Date.now(),assignmentId:selAssign,studentId:currentUser.id,answers:answers,status:'Submitted',score:0}; submissions.push(sub);}
      LS.set('mhs_submissions',submissions);
      showToast('Submitted!');
      currentSubPage='assignments';
