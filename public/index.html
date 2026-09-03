@@ -121,6 +121,67 @@ function logout(){
  render();
 }
 
+function getTimeGreeting(){
+  const h = new Date().getHours();
+  if(h < 12) return 'Good morning';
+  if(h < 18) return 'Good afternoon';
+  return 'Good evening';
+}
+function getRealTimeString(){
+  return new Date().toLocaleTimeString('en-KE', {hour:'2-digit', minute:'2-digit', second:'2-digit', hour12:true});
+}
+function getRealDateString(){
+  return new Date().toLocaleDateString('en-KE', {weekday:'long', year:'numeric', month:'long', day:'numeric'});
+}
+let clockInterval=null;
+function startClock(){
+  if(clockInterval) clearInterval(clockInterval);
+  const update = ()=>{
+    const el = document.getElementById('live_clock');
+    const el2 = document.getElementById('live_clock_mobile');
+    const str = getRealTimeString() + ' • ' + getRealDateString();
+    if(el) el.innerText = str;
+    if(el2) el2.innerText = getRealTimeString();
+  };
+  update();
+  clockInterval = setInterval(update, 1000);
+}
+function getTeacherStudentsForDisplay(){
+  if(typeof USE_BACKEND !== 'undefined' && USE_BACKEND && typeof cache !== 'undefined' && cache.studentsProgress && cache.studentsProgress.length){
+    return cache.studentsProgress.map(p=>({
+      ...p.student,
+      id: p.student._id || p.student.id,
+      _id: p.student._id,
+      completions: p.completions,
+      practicesCount: p.practicesCount,
+      avgPractice: p.avgPractice,
+      firstName: p.student.firstName,
+      lastName: p.student.lastName,
+      grade: p.student.grade,
+      email: p.student.email
+    }));
+  }
+  const usersLocal=LS.get('mhs_users',[]);
+  const localStudents = usersLocal.filter(u=>u.role==='student'&&u.teacherId===currentUser.teacherId).map(u=>({...u, completions:0, avgPractice:0}));
+  if(localStudents.length) return localStudents;
+  if(typeof USE_BACKEND !== 'undefined' && USE_BACKEND && typeof cache !== 'undefined' && cache.submissions && cache.submissions.length){
+    const seen={};
+    cache.submissions.forEach(s=>{
+      const stu = s.studentId;
+      if(stu && stu._id && !seen[stu._id]){
+        seen[stu._id]= {...stu, id: stu._id, _id: stu._id, completions:0, avgPractice:0, firstName: stu.firstName, lastName: stu.lastName, grade: stu.grade, email: stu.email};
+      } else if(stu && typeof stu === 'object' && stu.firstName){
+        const key = stu._id || stu.email;
+        if(key && !seen[key]) seen[key]= {...stu, id: stu._id || key, _id: stu._id, completions:0, avgPractice:0};
+      }
+    });
+    const fromSubs = Object.values(seen);
+    if(fromSubs.length) return fromSubs;
+  }
+  return [];
+}
+
+
 const SUBJECTS_META = {
 "Mathematics":{icon:"🔢",desc:"Numbers, algebra, geometry"},
 "English":{icon:"📝",desc:"Grammar, comprehension, writing"},
@@ -663,7 +724,7 @@ function renderStudent(){
  
  if(currentSubPage==='home'){
   mainContent=`
-  <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px"><div><h1 style="font-size:26px;font-weight:800">Good morning, ${currentUser.firstName} 👋</h1><div style="font-size:13px;color:var(--muted)">Grade ${currentUser.grade?.split(' ')[1]} • ${teacher?.fullName||''} • ${currentUser.teacherId}</div></div><div style="display:flex;gap:8px;align-items:center"><div class="card" style="padding:10px 14px;display:flex;gap:10px;align-items:center"><div style="width:40px;height:40px;border-radius:999px;background:var(--accent);display:grid;place-items:center;font-weight:700">${overall}%</div><div><div style="font-size:11px;color:var(--muted)">Overall</div><div style="font-weight:700;font-size:13px">${doneTopics}/${totalTopics} topics</div></div></div><button class="btn btn-ghost mobile-only" style="padding:8px 10px;font-size:12px" onclick="if(confirm('Log out?')){LS.del('mhs_session');currentPage='landing';render()}">🚪 Logout</button></div></div>
+  <div style="display:flex;justify-content:space-between;flex-wrap:wrap;gap:10px"><div><h1 style="font-size:26px;font-weight:800">${getTimeGreeting()}, ${currentUser.firstName} 👋</h1><div id="live_clock" style="font-size:13px;color:var(--primary);font-weight:600;margin-top:4px">${getRealTimeString()} • ${getRealDateString()}</div><div style="font-size:13px;color:var(--muted)">Grade ${currentUser.grade?.split(' ')[1]} • ${teacher?.fullName||''} • ${currentUser.teacherId}</div></div><div style="display:flex;gap:8px;align-items:center"><div class="card" style="padding:10px 14px;display:flex;gap:10px;align-items:center"><div style="width:40px;height:40px;border-radius:999px;background:var(--accent);display:grid;place-items:center;font-weight:700">${overall}%</div><div><div style="font-size:11px;color:var(--muted)">Overall</div><div style="font-weight:700;font-size:13px">${doneTopics}/${totalTopics} topics</div></div></div><button class="btn btn-ghost mobile-only" style="padding:8px 10px;font-size:12px" onclick="if(confirm('Log out?')){LS.del('mhs_session');currentPage='landing';render()}">🚪 Logout</button></div></div>
   
   ${recentGraded.length?`<div class="card" style="padding:14px;background:linear-gradient(135deg,#f0fdf4,#dcfce7);border:1px solid #bbf7d0;margin-top:16px"><div style="font-weight:700;font-size:14px;margin-bottom:8px">🎉 Grade Notifications - New Grades!</div>${recentGraded.map(s=>{const ass=assignments.find(a=>a.id===s.assignmentId); return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px;background:white;border-radius:10px;margin-bottom:6px"><div><div style="font-weight:600;font-size:13px">${ass?.title||''} - Graded!</div><div style="font-size:11px;color:var(--muted)">${s.score}/${ass?.totalMarks||''} • ${ass?.totalMarks?Math.round(s.score/ass.totalMarks*100):0}% • ${s.feedback||'Great job!'}</div></div><div style="background:var(--success);color:white;padding:4px 8px;border-radius:999px;font-size:11px;font-weight:700">${s.score}/${ass?.totalMarks||''}</div></div>`}).join('')}<button class="btn btn-ghost" style="margin-top:8px;font-size:12px" onclick="currentSubPage='assignments';renderStudent()">View All Assignments →</button></div>`:''}
   
@@ -971,8 +1032,17 @@ function renderTeacher(){
  const practiceScores=(USE_BACKEND ? cache.practiceScores : LS.get('mhs_practiceScores',[]));
  const teacher=currentUser;
  const teacherAssignments=assignments.filter(a=>a.teacherId===teacher.teacherId);
- const teacherSubmissions=submissions.filter(s=>{const a=assignments.find(x=>x.id===s.assignmentId); return a&&a.teacherId===teacher.teacherId;});
- const teacherStudents=users.filter(u=>u.role==='student'&&u.teacherId===teacher.teacherId);
+ 
+ const teacherSubmissions=submissions.filter(s=>{
+   const aid = (s.assignmentId && s.assignmentId._id) ? s.assignmentId._id : (typeof s.assignmentId==='string'? s.assignmentId : (s.assignmentId?._id || s.assignmentId));
+   const a=assignments.find(x=> (x._id===aid || x.id===aid || x._id===s.assignmentId || x.id===s.assignmentId || (s.assignmentId && s.assignmentId._id && (x._id===s.assignmentId._id || x.id===s.assignmentId._id))));
+   return a && a.teacherId===teacher.teacherId;
+ });
+
+ 
+ const teacherStudents = getTeacherStudentsForDisplay();
+ const teacherStudentsProgress = (USE_BACKEND && cache.studentsProgress) ? cache.studentsProgress : [];
+
  
  // Ensure currentSubPage for teacher
  if(!['home','students','assignments','submissions','results','profile'].includes(currentSubPage)) currentSubPage='home';
