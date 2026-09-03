@@ -146,6 +146,179 @@ function startClock(){
   update();
   clockInterval = setInterval(update, 1000);
 }
+
+// ===== ON-DEVICE NOTIFICATIONS SYSTEM - Separate for Student & Teacher =====
+const NOTIF_KEYS = {
+  lastAssignCount: 'mhs_notif_last_assign_count',
+  lastSubCountStudent: 'mhs_notif_last_sub_student',
+  lastGradedIds: 'mhs_notif_last_graded_ids',
+  lastSubCountTeacher: 'mhs_notif_last_sub_teacher',
+  lastPendingCount: 'mhs_notif_last_pending',
+  permissionAsked: 'mhs_notif_perm_asked'
+};
+
+function canNotify(){
+  return typeof Notification !== 'undefined' && Notification.permission === 'granted';
+}
+
+function requestNotificationPermission(){
+  if(typeof Notification === 'undefined') return;
+  if(Notification.permission === 'default' && !LS.get(NOTIF_KEYS.permissionAsked)){
+    LS.set(NOTIF_KEYS.permissionAsked, true);
+    Notification.requestPermission().then(p=>{
+      if(p==='granted') showToast('🔔 Notifications enabled');
+    });
+  }
+}
+
+function sendDeviceNotification(title, body, tag){
+  if(!canNotify()) return;
+  try{
+    const notif = new Notification(title, {
+      body: body,
+      icon: '/favicon.ico',
+      badge: '/favicon.ico',
+      tag: tag || title,
+      vibrate: [200,100,200],
+      requireInteraction: false
+    });
+    notif.onclick = ()=>{ window.focus(); notif.close(); };
+    // Auto close after 6s
+    setTimeout(()=>notif.close(), 6000);
+  }catch(e){
+    console.log('Notification failed', e);
+  }
+}
+
+function checkStudentNotifications(){
+  if(!currentUser || currentUser.role!=='student') return;
+  if(!USE_BACKEND) return;
+  const assignments = cache.assignments || [];
+  const submissions = cache.submissions || [];
+  
+  // 1. New assignment from teacher
+  const lastCount = LS.get(NOTIF_KEYS.lastAssignCount, 0);
+  if(assignments.length > lastCount && lastCount!==0){
+    const newCount = assignments.length - lastCount;
+    const latest = assignments[0];
+    sendDeviceNotification(
+      '📝 New Assignment!',
+      `${newCount} new assignment${newCount>1?'s':''} from your teacher${latest?' - '+latest.title:''}`,
+      'new-assignment'
+    );
+    showToast(`📝 ${newCount} new assignment${newCount>1?'s':''}!`);
+  }
+  LS.set(NOTIF_KEYS.lastAssignCount, assignments.length);
+  
+  // 2. Graded assignment
+  const graded = submissions.filter(s=>s.status==='Graded');
+  const lastGradedIds = LS.get(NOTIF_KEYS.lastGradedIds, []);
+  const newlyGraded = graded.filter(s=> !lastGradedIds.includes(s._id || s.id));
+  if(newlyGraded.length>0){
+    newlyGraded.forEach(s=>{
+      const assId = s.assignmentId?._id || s.assignmentId;
+      const ass = assignments.find(a=>a._id===assId || a.id===assId);
+      sendDeviceNotification(
+        '✅ Assignment Graded!',
+        `${ass?ass.title:'Your assignment'} graded - Score: ${s.score}/${ass?.totalMarks||''}`,
+        'graded-'+(s._id||s.id)
+      );
+    });
+    showToast(`✅ ${newlyGraded.length} assignment${newlyGraded.length>1?'s':''} graded!`);
+  }
+  LS.set(NOTIF_KEYS.lastGradedIds, graded.map(s=>s._id || s.id));
+}
+
+function checkTeacherNotifications(){
+  if(!currentUser || currentUser.role!=='teacher') return;
+  if(!USE_BACKEND) return;
+  const submissions = cache.submissions || [];
+  
+  // 1. New student submission
+  const lastSubCount = LS.get(NOTIF_KEYS.lastSubCountTeacher, 0);
+  const submitted = submissions.filter(s=>s.status==='Submitted');
+  if(submissions.length > lastSubCount && lastSubCount!==0){
+    const newSubs = submissions.length - lastSubCount;
+    const latest = submissions[0];
+    const studentName = latest?.studentId?.firstName ? (latest.studentId.firstName+' '+(latest.studentId.lastName||'')) : 'A student';
+    sendDeviceNotification(
+      '📥 New Submission!',
+      `${studentName} submitted an assignment${newSubs>1?'s':''} - ${newSubs} new`,
+      'new-submission'
+    );
+    showToast(`📥 ${newSubs} new submission${newSubs>1?'s':''}!`);
+  }
+  LS.set(NOTIF_KEYS.lastSubCountTeacher, submissions.length);
+  
+  // 2. Reminder to grade
+  const pending = submitted.length;
+  const lastPending = LS.get(NOTIF_KEYS.lastPendingCount, 0);
+  if(pending>0 && pending!==lastPending){
+    // Only notify if pending increased or first time
+    if(pending>0){
+      // Don't spam - only if pending >0 and it's been a while or increased
+      const lastReminder = LS.get('mhs_last_grade_reminder', 0);
+      const now = Date.now();
+      if(now - lastReminder > 1000*60*60*2){ // 2 hours
+        sendDeviceNotification(
+          '⏰ Reminder to Grade',
+          `You have ${pending} assignment${pending>1?'s':''} pending grading`,
+          'grade-reminder'
+        );
+        LS.set('mhs_last_grade_reminder', now);
+      }
+    }
+  }
+  LS.set(NOTIF_KEYS.lastPendingCount, pending);
+}
+
+function checkStudyReminder(){
+  if(!currentUser || currentUser.role!=='student') return;
+  // Reminder to continue studying - if no activity for 24h and has not started assignments
+  const assignments = cache.assignments || [];
+  const submissions = cache.submissions || [];
+  const notStarted = assignments.filter(a=> !submissions.some(s=> (s.assignmentId===a._id || s.assignmentId===a.id || s.assignmentId?._id===a._id) ));
+  if(notStarted.length>0){
+    const lastStudyReminder = LS.get('mhs_last_study_reminder', 0);
+    const now = Date.now();
+    if(now - lastStudyReminder > 1000*60*60*24){ // 24 hours
+      sendDeviceNotification(
+        '📚 Keep Learning!',
+        `You have ${notStarted.length} assignment${notStarted.length>1?'s':''} not started. Continue studying!`,
+        'study-reminder'
+      );
+      LS.set('mhs_last_study_reminder', now);
+    }
+  }
+}
+
+function initNotificationSystem(){
+  requestNotificationPermission();
+  // Check immediately after load
+  setTimeout(()=>{
+    if(currentUser?.role==='student'){
+      checkStudentNotifications();
+      checkStudyReminder();
+    } else if(currentUser?.role==='teacher'){
+      checkTeacherNotifications();
+    }
+  }, 2000);
+  
+  // Poll every 60 seconds for new assignments/submissions
+  setInterval(async ()=>{
+    if(!getToken() || !currentUser) return;
+    try{
+      await loadBackendData();
+      if(currentUser.role==='student'){
+        checkStudentNotifications();
+        checkStudyReminder();
+      } else {
+        checkTeacherNotifications();
+      }
+    }catch(e){}
+  }, 60000); // 1 minute poll
+}
+
 function getTeacherStudentsForDisplay(){
   if(typeof USE_BACKEND !== 'undefined' && USE_BACKEND && typeof cache !== 'undefined' && cache.studentsProgress && cache.studentsProgress.length){
     return cache.studentsProgress.map(p=>({
@@ -1090,7 +1263,7 @@ function renderTeacher(){
   <div class="card" style="padding:14px"><div style="font-size:11px;color:var(--muted)">Avg Score</div><div style="font-size:22px;font-weight:800;color:var(--success)">${avg}%</div></div>
   </div>
   <div class="card"><h3 style="font-weight:700;margin-bottom:10px">Quick Actions</h3><div style="display:flex;gap:8px;flex-wrap:wrap"><button class="btn btn-primary" onclick="currentSubPage='assignments';renderTeacher()">+ Create Assignment</button><button class="btn btn-outline" onclick="currentSubPage='submissions';renderTeacher()">Grade Submissions (${pendingGrading})</button><button class="btn btn-ghost" onclick="currentSubPage='students';renderTeacher()">View Student Progress</button></div></div>
-  <div class="card"><h3 style="font-weight:700;margin-bottom:8px">Recent Submissions</h3>${teacherSubmissions.slice(0,5).map(s=>{const stu=users.find(u=>u.id===s.studentId); const ass=assignments.find(a=>a.id===s.assignmentId); return `<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px"><div>${stu?.firstName||''} ${stu?.lastName||''} • ${ass?.title||''}</div><div style="color:${s.status==='Graded'?'var(--success)':'var(--warning)'}">${s.status} ${s.status==='Graded'?s.score+'/'+(ass?.totalMarks||'') : ''}</div></div>`}).join('')||'<div style="font-size:12px;color:var(--muted)">No submissions yet</div>'}</div>
+  <div class="card"><h3 style="font-weight:700;margin-bottom:8px">Recent Submissions</h3>${teacherSubmissions.slice(0,5).map(s=>{const stu=users.find(u=>u.id===s.studentId || u._id===s.studentId || u._id===s.studentId?._id) || s.studentId; const ass=assignments.find(a=>a._id===s.assignmentId || a.id===s.assignmentId || a._id===s.assignmentId?._id || a.id===s.assignmentId?._id) || {};  return `<div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border);font-size:12px"><div>${stu?.firstName||''} ${stu?.lastName||''} • ${ass?.title||''}</div><div style="color:${s.status==='Graded'?'var(--success)':'var(--warning)'}">${s.status} ${s.status==='Graded'?s.score+'/'+(ass?.totalMarks||'') : ''}</div></div>`}).join('')||'<div style="font-size:12px;color:var(--muted)">No submissions yet</div>'}</div>
   `;
  } else if(currentSubPage==='students'){
   mainContent=`
@@ -1120,7 +1293,7 @@ function renderTeacher(){
   mainContent=`
   <h2 style="font-size:20px;font-weight:800;margin-bottom:12px">Submissions 📥 (${teacherSubmissions.length})</h2>
   <div style="display:flex;gap:8px;margin-bottom:12px"><button class="btn ${currentSubPage==='submissions'?'btn-primary':'btn-ghost'}" style="padding:6px 10px;font-size:12px" onclick="currentSubPage='submissions';renderTeacher()">All (${teacherSubmissions.length})</button><button class="btn btn-ghost" style="padding:6px 10px;font-size:12px" onclick="filterSubs='Submitted';renderTeacherSubs()">Pending (${teacherSubmissions.filter(s=>s.status==='Submitted').length})</button><button class="btn btn-ghost" style="padding:6px 10px;font-size:12px" onclick="filterSubs='Graded';renderTeacherSubs()">Graded (${teacherSubmissions.filter(s=>s.status==='Graded').length})</button></div>
-  <div id="subs_list"><div class="card" style="padding:0;overflow:hidden"><div style="padding:10px;display:grid;grid-template-columns:2fr 2fr 1fr 1fr 1fr;font-size:11px;font-weight:700;color:var(--muted);border-bottom:1px solid var(--border)"><div>Student</div><div>Assignment</div><div>Status</div><div>Score</div><div>Action</div></div>${teacherSubmissions.map(s=>{const stu=users.find(u=>u.id===s.studentId); const ass=assignments.find(a=>a.id===s.assignmentId); return `<div style="padding:10px;display:grid;grid-template-columns:2fr 2fr 1fr 1fr 1fr;font-size:12px;border-bottom:1px solid var(--border);align-items:center"><div>${stu?.firstName||''} ${stu?.lastName||''}<div style="font-size:10px;color:var(--muted)">${new Date(s.submittedAt).toLocaleString()}</div></div><div>${ass?.title||''}<div style="font-size:10px;color:var(--muted)">${ass?.totalMarks||''} marks</div></div><div><span style="background:${s.status==='Graded'?'#dcfce7':'#fef3c7'};color:${s.status==='Graded'?'#14532d':'#92400e'};padding:3px 8px;border-radius:999px;font-size:10px">${s.status}</span></div><div>${s.status==='Graded'?s.score+'/'+(ass?.totalMarks||'')+' ('+Math.round(s.score/(ass?.totalMarks||1)*100)+'%)':'-'}</div><div><button class="btn btn-primary" style="padding:4px 8px;font-size:11px" onclick="gradeSubmission('${s.id}')">${s.status==='Graded'?'View':'Grade'}</button></div></div>`}).join('')||'<div style="padding:20px;text-align:center;color:var(--muted)">No submissions yet</div>'}</div></div>
+  <div id="subs_list"><div class="card" style="padding:0;overflow:hidden"><div style="padding:10px;display:grid;grid-template-columns:2fr 2fr 1fr 1fr 1fr;font-size:11px;font-weight:700;color:var(--muted);border-bottom:1px solid var(--border)"><div>Student</div><div>Assignment</div><div>Status</div><div>Score</div><div>Action</div></div>${teacherSubmissions.map(s=>{const stu=users.find(u=>u.id===s.studentId || u._id===s.studentId || u._id===s.studentId?._id) || s.studentId; const ass=assignments.find(a=>a._id===s.assignmentId || a.id===s.assignmentId || a._id===s.assignmentId?._id || a.id===s.assignmentId?._id) || {};  return `<div style="padding:10px;display:grid;grid-template-columns:2fr 2fr 1fr 1fr 1fr;font-size:12px;border-bottom:1px solid var(--border);align-items:center"><div>${stu?.firstName||''} ${stu?.lastName||''}<div style="font-size:10px;color:var(--muted)">${new Date(s.submittedAt).toLocaleString()}</div></div><div>${ass?.title||''}<div style="font-size:10px;color:var(--muted)">${ass?.totalMarks||''} marks</div></div><div><span style="background:${s.status==='Graded'?'#dcfce7':'#fef3c7'};color:${s.status==='Graded'?'#14532d':'#92400e'};padding:3px 8px;border-radius:999px;font-size:10px">${s.status}</span></div><div>${s.status==='Graded'?s.score+'/'+(ass?.totalMarks||'')+' ('+Math.round(s.score/(ass?.totalMarks||1)*100)+'%)':'-'}</div><div><button class="btn btn-primary" style="padding:4px 8px;font-size:11px" onclick="gradeSubmission('${s._id || s.id}')">${s.status==='Graded'?'View':'Grade'}</button></div></div>`}).join('')||'<div style="padding:20px;text-align:center;color:var(--muted)">No submissions yet</div>'}</div></div>
   <div id="grading_modal" style="display:none"></div>
   `;
  } else if(currentSubPage==='results'){
@@ -1355,7 +1528,7 @@ async function submitGrading(subId){
      renderTeacher();
    } else {
      const submissions=(USE_BACKEND ? cache.submissions : LS.get('mhs_submissions',[]));
-     const sub=submissions.find(s=>s.id===subId);
+     const sub=submissions.find(s=>s._id===subId || s.id===subId);
      const updated={...sub, score:total, perQuestion:perQ, feedback:feedback, gradedAt:new Date().toISOString(), status:'Graded'};
      const newSubs=submissions.map(s=>s.id===subId?updated:s);
      LS.set('mhs_submissions',newSubs);
